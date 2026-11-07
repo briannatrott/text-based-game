@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Curse of the Golden Beast</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:#1b1d22;display:flex;align-items:center;justify-content:center;padding:16px;font-family:ui-monospace,Menlo,Consolas,"Courier New",monospace}
+  .win{width:100%;max-width:860px;background:#0c0c0c;border:1px solid #333;border-radius:8px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#2b2d33;color:#c9c9c9;font-size:13px}
+  .dot{width:12px;height:12px;border-radius:50%}
+  .bar span:last-child{margin-left:8px}
+  #term{height:70vh;min-height:360px;overflow-y:auto;padding:14px 16px;color:#d4d4d4;font-size:15px;line-height:1.5;white-space:pre-wrap;word-break:break-word;cursor:text}
+  .line{display:flex;flex-wrap:wrap}
+  #cmd{flex:1;min-width:80px;background:transparent;border:0;outline:0;color:#f5d76e;font:inherit;caret-color:#f5d76e;padding:0}
+  .typed{color:#f5d76e}
+  .sys{color:#7fb4ff}
+</style>
+</head>
+<body>
+<div class="win">
+  <div class="bar"><span class="dot" style="background:#ff5f56"></span><span class="dot" style="background:#ffbd2e"></span><span class="dot" style="background:#27c93f"></span><span>Curse of the Golden Beast</span></div>
+  <div id="term" aria-live="polite"><span class="sys">Loading Python in your browser... this can take a few seconds the first time.</span>
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.29.5/full/pyodide.js"></script>
+<script>
+const term = document.getElementById('term');
+function write(text, cls){
+  const s = document.createElement('span');
+  if (cls) s.className = cls;
+  s.textContent = text;
+  term.appendChild(s);
+  term.scrollTop = term.scrollHeight;
+}
+function ask(prompt){
+  return new Promise(resolve => {
+    const line = document.createElement('div'); line.className = 'line';
+    const p = document.createElement('span'); p.textContent = prompt;
+    const inp = document.createElement('input'); inp.id = 'cmd';
+    inp.autocomplete = 'off'; inp.autocapitalize = 'off'; inp.spellcheck = false;
+    inp.setAttribute('aria-label', 'Type a command');
+    line.append(p, inp); term.appendChild(line);
+    inp.focus(); term.scrollTop = term.scrollHeight;
+    inp.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      const v = inp.value;
+      const t = document.createElement('span'); t.className = 'typed'; t.textContent = v;
+      inp.replaceWith(t);
+      resolve(v);
+    });
+  });
+}
+term.addEventListener('click', () => { const i = document.getElementById('cmd'); if (i) i.focus(); });
+
+const RUNNER = `
+import ast
+class _UseAsyncInput(ast.NodeTransformer):
+    def visit_Call(self, node):
+        self.generic_visit(node)
+        if isinstance(node.func, ast.Name) and node.func.id == 'input':
+            node.func.id = '__ainput'
+            return ast.Await(value=node)
+        return node
+async def __run_game(src):
+    tree = ast.fix_missing_locations(_UseAsyncInput().visit(ast.parse(src)))
+    code = compile(tree, 'TextBasedGame.py', 'exec', flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
+    g = {'__name__': '__main__', '__ainput': __ainput}
+    result = eval(code, g)
+    if result is not None:
+        await result
+`;
+
+async function main(){
+  const [pyodide, src] = await Promise.all([
+    loadPyodide(),
+    fetch('TextBasedGame.py').then(r => { if (!r.ok) throw new Error('Could not load TextBasedGame.py'); return r.text(); })
+  ]);
+  pyodide.setStdout({ batched: s => write(s + '\n') });
+  pyodide.setStderr({ batched: s => write(s + '\n', 'sys') });
+  pyodide.globals.set('__ainput', p => ask(p === undefined ? '' : String(p)));
+  pyodide.runPython(RUNNER);
+  const run = pyodide.globals.get('__run_game');
+  term.textContent = '';
+  for (;;) {
+    try { await run(src); }
+    catch (e) { write('\n' + e.message + '\n', 'sys'); }
+    write('\n--- Game closed ---\n', 'sys');
+    await ask('Press Enter to play again.');
+    term.textContent = '';
+  }
+}
+main().catch(e => write('\nSomething went wrong: ' + e.message + '\nTry refreshing the page.\n', 'sys'));
+</script>
+</body>
+</html>
